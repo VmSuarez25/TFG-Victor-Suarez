@@ -2,227 +2,231 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.widgets import TextBox
+# Nota: 'cv2' y 'os' no se usan en el código actual, pero se mantienen por si se planea guardar video en el futuro
+import cv2
 import os
 
-# Clase para encapsular el péndulo doble
+# Clase para encapsular el péndulo doble como sistema disipativo
 class PénduloDoble:
     def __init__(self, masa1, masa2, longitud1, longitud2, centro_masa_1, centro_masa_2, inercia1, inercia2, gravedad, friccion_aire=0.1, friccion_rod1=0, friccion_rod2=0):
-        self.masa1, self.masa2 = masa1, masa2 # Masas de los eslabones
-        self.longitud1, self.longitud2 = longitud1, longitud2 # Longitudes de los eslabones
-        self.centro_masa_1, self.centro_masa_2 = centro_masa_1, centro_masa_2 # Distancia entre las articulaciones y el centro de masa del eslabón
-        self.inercia1, self.inercia2 = inercia1, inercia2 # Momentos de inercia
-        self.gravedad, self.friccion_rod1, self.friccion_rod2 = gravedad, friccion_rod1, friccion_rod2 # Constante de la aceleración gravitatoria, fricción rodamiento 1 y fricción rodamiento 2
+        self.masa1, self.masa2 = masa1, masa2  # Masas de los eslabones
+        self.longitud1, self.longitud2 = longitud1, longitud2  # Longitudes de los eslabones
+        self.centro_masa_1, self.centro_masa_2 = centro_masa_1, centro_masa_2  # Distancia entre las articulaciones y el centro de masa del eslabón
+        self.inercia1, self.inercia2 = inercia1, inercia2  # Momentos de inercia
+        self.gravedad, self.friccion_rod1, self.friccion_rod2 = gravedad, friccion_rod1, friccion_rod2  # Constante de la aceleración gravitatoria, fricción rodamiento 1 y fricción rodamiento 2
         self.friccion_aire = friccion_aire  # Coeficiente de resistencia del aire
-        self.M11_const = masa1 * centro_masa_1**2 + masa2 * longitud1**2 + inercia1 # Término 11 de la matriz de inercia
-        self.M22_const = masa2 * centro_masa_2**2 + inercia2 # Término 22 de la matriz de inercia
-        self.angulo = None
-        self.vel_ang = None
+        self.M11_const = masa1 * centro_masa_1**2 + masa2 * longitud1**2 + inercia1  # Término 11 de la matriz de inercia (parte constante de M)
+        self.M22_const = masa2 * centro_masa_2**2 + inercia2  # Término 22 de la matriz de inercia (parte constante de M)
+        self.angulo = None  # Ángulos actuales del péndulo (inicializados en establecer_condiciones_iniciales)
+        self.vel_ang = None  # Velocidades angulares actuales (inicializadas en establecer_condiciones_iniciales)
 
- # Condiciones iniciales para ángulos y velocidades angulares (pasamos de grados a radianes) 
+    # Condiciones iniciales para ángulos y velocidades angulares (pasamos de grados a radianes)
     def establecer_condiciones_iniciales(self, angulo1_i, angulo2_i, vel_ang1_i=0.0, vel_ang2_i=0.0):
-        self.angulo = np.array([np.radians(angulo1_i), np.radians(angulo2_i)])
-        self.vel_ang = np.array([vel_ang1_i, vel_ang2_i])
+        self.angulo = np.array([np.radians(angulo1_i), np.radians(angulo2_i)])  # Convertimos grados a radianes para cálculos internos
+        self.vel_ang = np.array([vel_ang1_i, vel_ang2_i])  # Velocidades angulares iniciales en rad/s
 
-# Modelo dinámico: MÖ + CO' + DO + GO = tau 
+    # Modelo dinámico: M * q̈ + C * q̇ + D * q̇ + G = τ (basado en las ecuaciones de Lagrange para sistemas disipativos)
     def calcular_matrices_sistema(self):
-        angulo, vel_ang = self.angulo, self.vel_ang
-        M11 = self.M11_const
-        M12 = self.masa2 * self.longitud1 * self.centro_masa_2 * np.cos(angulo[0] - angulo[1])
-        MM = np.array([[M11, M12], [M12, self.M22_const]])
+        angulo, vel_ang = self.angulo, self.vel_ang  # Ángulos y velocidades actuales
+        M11 = self.M11_const  # Término constante de la matriz de inercia
+        M12 = self.masa2 * self.longitud1 * self.centro_masa_2 * np.cos(angulo[0] - angulo[1])  # Término cruzado de la matriz de inercia
+        MM = np.array([[M11, M12], [M12, self.M22_const]])  # Matriz de inercia M (derivado de T = 1/2 * q̇^T * M * q̇)
 
-        # Matriz de Coriolis
-        k = self.masa2 * self.longitud1 * self.centro_masa_2 * np.sin(angulo[0] - angulo[1])
-        CC = np.array([[0, k * vel_ang[1]], [-k * vel_ang[0], 0]])
-        
-        # Matriz fuerzas gravitacionales
-        GG = np.array([(self.masa1 * self.centro_masa_1 + self.masa2 * self.longitud1) * self.gravedad * np.sin(angulo[0]), 
-                       self.masa2 * self.centro_masa_2 * self.gravedad * np.sin(angulo[1])])
-        
-        # Matriz de rozamiento
-        DD = np.diag([self.friccion_rod1 + self.friccion_aire, self.friccion_rod2 + self.friccion_aire])
-        
-        return MM, CC, GG, DD
+        # Matriz de Coriolis (términos centrífugos y de Coriolis)
+        k = self.masa2 * self.longitud1 * self.centro_masa_2 * np.sin(angulo[0] - angulo[1])  # Factor de acoplamiento angular
+        CC = np.array([[0, k * vel_ang[1]], [-k * vel_ang[0], 0]])  # Matriz C para fuerzas de Coriolis
 
+        # Matriz fuerzas gravitacionales (derivado de ∂V/∂q, donde V es el potencial gravitacional)
+        GG = np.array([(self.masa1 * self.centro_masa_1 + self.masa2 * self.longitud1) * self.gravedad * np.sin(angulo[0]),
+                       self.masa2 * self.centro_masa_2 * self.gravedad * np.sin(angulo[1])])  # Vector G de fuerzas gravitacionales
+
+        # Matriz de rozamiento (basada en la función de Rayleigh: R = 1/2 * q̇^T * D * q̇)
+        DD = np.diag([self.friccion_rod1 + self.friccion_aire, self.friccion_rod2 + self.friccion_aire])  # Matriz D de disipación
+
+        return MM, CC, GG, DD  # Retornamos las matrices para la ecuación dinámica
+
+    # Integración de la dinámica con fuerzas disipativas (Q_j = -∂R/∂q̇ - C*q̇ - G)
     def integrar_dinamica(self, dt):
-        torque = np.zeros(2) # Asumiendo que no hay torques externos
-        MM, CC, GG, DD = self.calcular_matrices_sistema()
-        
-        # Aquí resolvemos la ecuación para obtener teta punto punto 
+        torque = np.zeros(2)  # Asumiendo que no hay torques externos (τ = 0 para movimiento libre)
+        MM, CC, GG, DD = self.calcular_matrices_sistema()  # Obtenemos las matrices del sistema
+
+        # Aquí resolvemos la ecuación para obtener q̈ (aceleración angular)
         def derivadas(angulo, vel_ang):
-            return np.linalg.inv(MM) @ (torque - CC @ vel_ang - DD @ vel_ang - GG)
-        # MÖ=t-CO(punto)-DO(punto)-G
+            return np.linalg.inv(MM) @ (torque - CC @ vel_ang - DD @ vel_ang - GG)  # Ecuación de Lagrange: M * q̈ = τ - C * q̇ - D * q̇ - G
         # En Python, np.linalg.inv calcula la inversa de la matriz
         # @ realiza multiplicaciones de matrices
-        
+
         # Este código utiliza el método RK4 para resolver las ecuaciones diferenciales del péndulo doble de
         # manera más precisa que un método simple como Euler. En lugar de avanzar directamente con una
         # sola estimación, RK4 toma cuatro "muestras" a lo largo del intervalo de tiempo (dt) y las combina
         # para obtener una aproximación más exacta del siguiente estado del sistema. Esto es especialmente
         # útil para sistemas no lineales como el péndulo doble, que puede exhibir comportamiento caótico.
-        k1v = self.vel_ang
-        k1a = derivadas(self.angulo, self.vel_ang)
-        k2v = self.vel_ang + 0.5 * dt * k1a
-        k2a = derivadas(self.angulo + 0.5 * dt * k1v, self.vel_ang + 0.5 * dt * k1a)
-        k3v = self.vel_ang + 0.5 * dt * k2a
-        k3a = derivadas(self.angulo + 0.5 * dt * k2v, self.vel_ang + 0.5 * dt * k2a)
-        k4v = self.vel_ang + dt * k3a
-        k4a = derivadas(self.angulo + dt * k3v, self.vel_ang + dt * k3a)
-        
-        self.angulo += (dt / 6) * (k1v + 2*k2v + 2*k3v + k4v)
-        self.vel_ang += (dt / 6) * (k1a + 2*k2a + 2*k3a + k4a)
-        
-        fuerza_rozamiento = np.dot(DD, self.vel_ang) # F=-b·v
-        
-        return self.angulo, self.vel_ang
+        k1v = self.vel_ang  # Primera estimación de velocidad (q̇)
+        k1a = derivadas(self.angulo, self.vel_ang)  # Primera estimación de aceleración (q̈)
+        k2v = self.vel_ang + 0.5 * dt * k1a  # Segunda estimación de velocidad
+        k2a = derivadas(self.angulo + 0.5 * dt * k1v, self.vel_ang + 0.5 * dt * k1a)  # Segunda estimación de aceleración
+        k3v = self.vel_ang + 0.5 * dt * k2a  # Tercera estimación de velocidad
+        k3a = derivadas(self.angulo + 0.5 * dt * k2v, self.vel_ang + 0.5 * dt * k2a)  # Tercera estimación de aceleración
+        k4v = self.vel_ang + dt * k3a  # Cuarta estimación de velocidad
+        k4a = derivadas(self.angulo + dt * k3v, self.vel_ang + dt * k3a)  # Cuarta estimación de aceleración
 
+        self.angulo += (dt / 6) * (k1v + 2*k2v + 2*k3v + k4v)  # Actualización de los ángulos con RK4
+        self.vel_ang += (dt / 6) * (k1a + 2*k2a + 2*k3a + k4a)  # Actualización de las velocidades con RK4
+
+        return self.angulo, self.vel_ang  # Retornamos los nuevos ángulos y velocidades
+
+    # Cinemática directa para transformar ángulos en coordenadas cartesianas
     def cinematica_directa(self):
-        x1 = self.longitud1 * np.sin(self.angulo[0])
-        y1 = -self.longitud1 * np.cos(self.angulo[0])
-        x2 = x1 + self.longitud2 * np.sin(self.angulo[1])
-        y2 = y1 - self.longitud2 * np.cos(self.angulo[1])
-        return (x1, y1), (x2, y2)
+        x1 = self.longitud1 * np.sin(self.angulo[0])  # Coordenada x de la primera masa
+        y1 = -self.longitud1 * np.cos(self.angulo[0])  # Coordenada y de la primera masa
+        x2 = x1 + self.longitud2 * np.sin(self.angulo[1])  # Coordenada x de la segunda masa
+        y2 = y1 - self.longitud2 * np.cos(self.angulo[1])  # Coordenada y de la segunda masa
+        return (x1, y1), (x2, y2)  # Retornamos las posiciones de ambas masas
 
 # Configuración inicial de parámetros predeterminados
 parametros = {
     'masa1': 1.0, 'masa2': 3.0, 'longitud1': 1.5, 'longitud2': 1.0, 'masa_barra': 0.1, 'radio_barra': 0.05,
-    'angulo1_i': 90.0, 'angulo2_i': 0.0, 'friccion_aire': 0.1
+    'angulo1_i': 90.0, 'angulo2_i': 0.0, 'friccion_aire': 0.1  # Diccionario con valores iniciales
 }
 
 # DEFINIMOS LOS PARÁMETROS INICIALES
-tiempo_max = 30 # Es el tiempo que durará la simulación (solo afecta si guardamos el video)
+tiempo_max = 30  # Es el tiempo que durará la simulación (solo afecta si guardamos el video)
 
 # El intervalo de tiempo que se usa para avanzar en la simulación. Reducimos dt para mejorar la fluidez.
-dt = 1/60 # 60 fps
+dt = 1/60  # 60 fps, paso de tiempo pequeño para animación fluida y precisión numérica
 
 # Inicializamos el péndulo con valores predeterminados
-masa1 = parametros['masa1'] + parametros['masa_barra']
-masa2 = parametros['masa2'] + parametros['masa_barra']
-longitud1 = parametros['longitud1'] + parametros['radio_barra']
-longitud2 = parametros['longitud2'] + parametros['radio_barra']
-inercia1 = (1/3) * masa1 * longitud1**2 # kgm^2, momento de inercia de una barra delgada respecto a un eje perpendicular que pasa por su extremo
-inercia2 = (1/3) * masa2 * longitud2**2
-gravedad = 9.8007 # m/s^2, aceleración de la gravedad (Madrid, España)
-friccion_rod1 = 0
-friccion_rod2 = 0
-friccion_aire = parametros['friccion_aire']
-centro_masa_1 = ((longitud1/2)*parametros['masa1'] + longitud1*parametros['masa_barra'])/masa1 # Calculado en apuntes
-centro_masa_2 = ((longitud2/2)*parametros['masa2'] + longitud2*parametros['masa_barra'])/masa2 # Calculado en apuntes
+masa1 = parametros['masa1'] + parametros['masa_barra']  # Masa total del primer eslabón (masa puntual + barra)
+masa2 = parametros['masa2'] + parametros['masa_barra']  # Masa total del segundo eslabón (masa puntual + barra)
+longitud1 = parametros['longitud1'] + parametros['radio_barra']  # Longitud efectiva del primer eslabón
+longitud2 = parametros['longitud2'] + parametros['radio_barra']  # Longitud efectiva del segundo eslabón
+inercia1 = (1/3) * masa1 * longitud1**2  # kgm^2, momento de inercia de una barra delgada respecto a un eje perpendicular que pasa por su extremo
+inercia2 = (1/3) * masa2 * longitud2**2  # Momento de inercia del segundo eslabón
+gravedad = 9.8007  # m/s^2, aceleración de la gravedad (Madrid, España)
+friccion_rod1 = 0.05  # Fricción en la primera articulación (valor no nulo para disipación realista)
+friccion_rod2 = 0.05  # Fricción en la segunda articulación (valor no nulo para disipación realista)
+friccion_aire = parametros['friccion_aire']  # Coeficiente de resistencia del aire desde parámetros
+centro_masa_1 = ((longitud1/2)*parametros['masa1'] + longitud1*parametros['masa_barra'])/masa1  # Calculado en apuntes: centro de masa del primer eslabón
+centro_masa_2 = ((longitud2/2)*parametros['masa2'] + longitud2*parametros['masa_barra'])/masa2  # Calculado en apuntes: centro de masa del segundo eslabón
 
-pendulo = PénduloDoble(masa1, masa2, longitud1, longitud2, centro_masa_1, centro_masa_2, inercia1, inercia2, gravedad, friccion_aire, friccion_rod1, friccion_rod2)
-pendulo.establecer_condiciones_iniciales(parametros['angulo1_i'], parametros['angulo2_i'])
+pendulo = PénduloDoble(masa1, masa2, longitud1, longitud2, centro_masa_1, centro_masa_2, inercia1, inercia2, gravedad, friccion_aire, friccion_rod1, friccion_rod2)  # Instanciamos el péndulo
+pendulo.establecer_condiciones_iniciales(parametros['angulo1_i'], parametros['angulo2_i'])  # Establecemos condiciones iniciales
 
-# Diseño del péndulo
-color_eslabon = 'black'
-color_masa1 = 'green'
-color_masa2 = 'red'
-color_trayectoria = 'blue'
+# Diseño del péndulo (colores fieles a la teoría y al péndulo físico)
+color_eslabon = 'black'  # Color de las barras
+color_masa1 = 'green'  # Color de la primera masa
+color_masa2 = 'red'  # Color de la segunda masa
+color_trayectoria = 'blue'  # Color de la trayectoria de la segunda masa
 
-trayectoria = []
+trayectoria = []  # Lista para almacenar la trayectoria de la segunda masa
 
-# Ajustes del recuadro
-fig, ax = plt.subplots(figsize=(14, 8))
-plt.subplots_adjust(bottom=0.15, top=0.9)
-longitud_max = longitud1 + longitud2 + 0.5 # Ajustamos para abarcar la longitud total del péndulo más un margen
-ax.set_xlim(-longitud_max, longitud_max)
-ax.set_ylim(-longitud_max, longitud_max + 1)
-ax.set_aspect('equal', adjustable='box')
-ax.set_xlabel('X (m)')
-ax.set_ylabel('Y (m)')
-ax.set_title('Simulación de Péndulo Doble')
+# Ajustes del recuadro de visualización
+fig, ax = plt.subplots(figsize=(14, 8))  # Creamos la figura y el eje para la animación
+plt.subplots_adjust(bottom=0.15, top=0.9)  # Ajustamos márgenes para dejar espacio a los TextBox
+longitud_max = longitud1 + longitud2 + 0.5  # Ajustamos para abarcar la longitud total del péndulo más un margen
+ax.set_xlim(-longitud_max, longitud_max)  # Límites del eje X
+ax.set_ylim(-longitud_max, longitud_max + 1)  # Límites del eje Y
+ax.set_aspect('equal', adjustable='box')  # Mantenemos proporciones iguales para una visualización realista
+ax.set_xlabel('X (m)')  # Etiqueta del eje X
+ax.set_ylabel('Y (m)')  # Etiqueta del eje Y
+ax.set_title('Simulación de Péndulo Doble Disipativo')  # Título que refleja el carácter disipativo del sistema
 
-barra, = ax.plot([], [], '-', lw=2, color=color_eslabon) # Línea que representa las barras
-masa1, = ax.plot([], [], 'o', markersize=10, color=color_masa1) # Representa la masa en el primer eslabón
-masa2, = ax.plot([], [], 'o', markersize=10, color=color_masa2) # Representa la masa en el segundo eslabón
-traza, = ax.plot([], [], '-', lw=1, color=color_trayectoria) # Trazado que describe el rodamiento 2
-texto_tiempo = ax.text(0.1, 0.95, '', transform=ax.transAxes)  # Texto del tiempo
+barra, = ax.plot([], [], '-', lw=2, color=color_eslabon)  # Línea que representa las barras
+masa1_graf, = ax.plot([], [], 'o', markersize=10, color=color_masa1)  # Representa la masa en el primer eslabón
+masa2_graf, = ax.plot([], [], 'o', markersize=10, color=color_masa2)  # Representa la masa en el segundo eslabón
+traza, = ax.plot([], [], '-', lw=1, color=color_trayectoria)  # Trazado que describe el movimiento de la segunda masa (visualiza el caos)
+texto_tiempo = ax.text(0.1, 0.95, '', transform=ax.transAxes)  # Texto del tiempo transcurrido
 
-# Campos de texto para entrada dentro de la animación
+# Campos de texto para entrada dentro de la animación (interfaz interactiva)
 def actualizar_parametro(param, val):
     try:
-        valor = float(val)
-        if valor > 0 or param in ['angulo1_i', 'angulo2_i']:
-            parametros[param] = valor
-            reiniciar_pendulo()
+        valor = float(val)  # Convertimos la entrada a float
+        if valor >= 0 or param in ['angulo1_i', 'angulo2_i']:  # Permitimos valores negativos solo para ángulos iniciales
+            parametros[param] = valor  # Actualizamos el parámetro en el diccionario
+            reiniciar_pendulo()  # Reiniciamos la simulación con los nuevos valores
     except ValueError:
-        pass
+        pass  # Ignoramos entradas no válidas
 
 def reiniciar_pendulo():
-    global pendulo, longitud_max
-    masa1 = parametros['masa1'] + parametros['masa_barra']
-    masa2 = parametros['masa2'] + parametros['masa_barra']
-    longitud1 = parametros['longitud1'] + parametros['radio_barra']
-    longitud2 = parametros['longitud2'] + parametros['radio_barra']
-    inercia1 = (1/3) * masa1 * longitud1**2
-    inercia2 = (1/3) * masa2 * longitud2**2
-    centro_masa_1 = ((longitud1/2)*parametros['masa1'] + longitud1*parametros['masa_barra'])/masa1
-    centro_masa_2 = ((longitud2/2)*parametros['masa2'] + longitud2*parametros['masa_barra'])/masa2
-    pendulo = PénduloDoble(masa1, masa2, longitud1, longitud2, centro_masa_1, centro_masa_2, inercia1, inercia2, gravedad, parametros['friccion_aire'], friccion_rod1, friccion_rod2)
-    pendulo.establecer_condiciones_iniciales(parametros['angulo1_i'], parametros['angulo2_i'])
-    longitud_max = longitud1 + longitud2 + 0.5
-    ax.set_xlim(-longitud_max, longitud_max)
-    ax.set_ylim(-longitud_max, longitud_max + 1)
-    trayectoria.clear()
+    global pendulo, longitud_max  # Variables globales que se modifican
+    masa1 = parametros['masa1'] + parametros['masa_barra']  # Recalculamos masa total del primer eslabón
+    masa2 = parametros['masa2'] + parametros['masa_barra']  # Recalculamos masa total del segundo eslabón
+    longitud1 = parametros['longitud1'] + parametros['radio_barra']  # Recalculamos longitud efectiva
+    longitud2 = parametros['longitud2'] + parametros['radio_barra']  # Recalculamos longitud efectiva
+    inercia1 = (1/3) * masa1 * longitud1**2  # Recalculamos momento de inercia del primer eslabón
+    inercia2 = (1/3) * masa2 * longitud2**2  # Recalculamos momento de inercia del segundo eslabón
+    centro_masa_1 = ((longitud1/2)*parametros['masa1'] + longitud1*parametros['masa_barra'])/masa1  # Recalculamos centro de masa
+    centro_masa_2 = ((longitud2/2)*parametros['masa2'] + longitud2*parametros['masa_barra'])/masa2  # Recalculamos centro de masa
+    pendulo = PénduloDoble(masa1, masa2, longitud1, longitud2, centro_masa_1, centro_masa_2, inercia1, inercia2, gravedad, 
+                           parametros['friccion_aire'], friccion_rod1, friccion_rod2)  # Nueva instancia del péndulo
+    pendulo.establecer_condiciones_iniciales(parametros['angulo1_i'], parametros['angulo2_i'])  # Nuevas condiciones iniciales
+    longitud_max = longitud1 + longitud2 + 0.5  # Actualizamos el tamaño del recuadro
+    ax.set_xlim(-longitud_max, longitud_max)  # Actualizamos límites X
+    ax.set_ylim(-longitud_max, longitud_max + 1)  # Actualizamos límites Y
+    trayectoria.clear()  # Limpiamos la trayectoria anterior
 
-# Ajustes para los TextBox 
-ancho_caja_texto = 0.08
-alto_caja_texto = 0.03
-margen_izquierdo = 0.15  # Usamos margen_izquierdo en lugar de center_offset
-separacion = 0.17  # Ajustamos la separación para que coincida
+# Ajustes para los TextBox (interfaz interactiva para modificar parámetros)
+ancho_caja_texto = 0.08  # Ancho de las cajas de texto
+alto_caja_texto = 0.03  # Alto de las cajas de texto
+margen_izquierdo = 0.15  # Usamos margen_izquierdo en lugar de center_offset para posicionar las cajas
+separacion = 0.17  # Ajustamos la separación para que coincida entre cajas
 
 # Primera fila (5 cajas) - Mantenemos en y=0.01, usando margen_izquierdo en lugar de center_offset
-ax_masa1 = plt.axes([margen_izquierdo, 0.01, ancho_caja_texto, alto_caja_texto])
-ax_masa2 = plt.axes([margen_izquierdo + separacion, 0.01, ancho_caja_texto, alto_caja_texto])
-ax_longitud1 = plt.axes([margen_izquierdo + 2*separacion, 0.01, ancho_caja_texto, alto_caja_texto])
-ax_longitud2 = plt.axes([margen_izquierdo + 3*separacion, 0.01, ancho_caja_texto, alto_caja_texto])
-ax_masa_barra = plt.axes([margen_izquierdo + 4*separacion, 0.01, ancho_caja_texto, alto_caja_texto])
+ax_masa1 = plt.axes([margen_izquierdo, 0.01, ancho_caja_texto, alto_caja_texto])  
+ax_masa2 = plt.axes([margen_izquierdo + separacion, 0.01, ancho_caja_texto, alto_caja_texto])  
+ax_longitud1 = plt.axes([margen_izquierdo + 2*separacion, 0.01, ancho_caja_texto, alto_caja_texto])  
+ax_longitud2 = plt.axes([margen_izquierdo + 3*separacion, 0.01, ancho_caja_texto, alto_caja_texto])  
+ax_masa_barra = plt.axes([margen_izquierdo + 4*separacion, 0.01, ancho_caja_texto, alto_caja_texto])  
 
 # Segunda fila (4 cajas) - Mantenemos en y=0.06, usando margen_izquierdo en lugar de center_offset
-ax_radio_barra = plt.axes([margen_izquierdo, 0.06, ancho_caja_texto, alto_caja_texto])
-ax_friccion_aire = plt.axes([margen_izquierdo + separacion, 0.06, ancho_caja_texto, alto_caja_texto])
-ax_angulo1 = plt.axes([margen_izquierdo + 2*separacion, 0.06, ancho_caja_texto, alto_caja_texto])
-ax_angulo2 = plt.axes([margen_izquierdo + 3*separacion, 0.06, ancho_caja_texto, alto_caja_texto])
+ax_radio_barra = plt.axes([margen_izquierdo, 0.06, ancho_caja_texto, alto_caja_texto])  
+ax_friccion_aire = plt.axes([margen_izquierdo + separacion, 0.06, ancho_caja_texto, alto_caja_texto]) 
+ax_angulo1 = plt.axes([margen_izquierdo + 2*separacion, 0.06, ancho_caja_texto, alto_caja_texto])  
+ax_angulo2 = plt.axes([margen_izquierdo + 3*separacion, 0.06, ancho_caja_texto, alto_caja_texto])  
 
-caja_texto_masa1 = TextBox(ax_masa1, 'M1 (kg)', initial=str(parametros['masa1']))
-caja_texto_masa2 = TextBox(ax_masa2, 'M2 (kg)', initial=str(parametros['masa2']))
-caja_texto_longitud1 = TextBox(ax_longitud1, 'L1 (m)', initial=str(parametros['longitud1']))
-caja_texto_longitud2 = TextBox(ax_longitud2, 'L2 (m)', initial=str(parametros['longitud2']))
+caja_texto_masa1 = TextBox(ax_masa1, 'M1 (kg)', initial=str(parametros['masa1']))  
+caja_texto_masa2 = TextBox(ax_masa2, 'M2 (kg)', initial=str(parametros['masa2']))  
+caja_texto_longitud1 = TextBox(ax_longitud1, 'L1 (m)', initial=str(parametros['longitud1']))  
+caja_texto_longitud2 = TextBox(ax_longitud2, 'L2 (m)', initial=str(parametros['longitud2']))  
 caja_texto_masa_barra = TextBox(ax_masa_barra, 'MRod (kg)', initial=str(parametros['masa_barra']))
-caja_texto_radio_barra = TextBox(ax_radio_barra, 'Radio Rod (m)', initial=str(parametros['radio_barra']))
-caja_texto_friccion_aire = TextBox(ax_friccion_aire, 'Res. Aire', initial=str(parametros['friccion_aire']))
-caja_texto_angulo1 = TextBox(ax_angulo1, 'Ángulo 1 (deg)', initial=str(parametros['angulo1_i']))
-caja_texto_angulo2 = TextBox(ax_angulo2, 'Ángulo 2 (deg)', initial=str(parametros['angulo2_i']))
+caja_texto_radio_barra = TextBox(ax_radio_barra, 'Radio Rod (m)', initial=str(parametros['radio_barra']))  
+caja_texto_friccion_aire = TextBox(ax_friccion_aire, 'Res. Aire', initial=str(parametros['friccion_aire']))  
+caja_texto_angulo1 = TextBox(ax_angulo1, 'Ángulo 1 (deg)', initial=str(parametros['angulo1_i']))  
+caja_texto_angulo2 = TextBox(ax_angulo2, 'Ángulo 2 (deg)', initial=str(parametros['angulo2_i'])) 
 
-caja_texto_masa1.on_submit(lambda val: actualizar_parametro('masa1', val))
-caja_texto_masa2.on_submit(lambda val: actualizar_parametro('masa2', val))
-caja_texto_longitud1.on_submit(lambda val: actualizar_parametro('longitud1', val))
-caja_texto_longitud2.on_submit(lambda val: actualizar_parametro('longitud2', val))
-caja_texto_masa_barra.on_submit(lambda val: actualizar_parametro('masa_barra', val))
-caja_texto_radio_barra.on_submit(lambda val: actualizar_parametro('radio_barra', val))
-caja_texto_friccion_aire.on_submit(lambda val: actualizar_parametro('friccion_aire', val))
-caja_texto_angulo1.on_submit(lambda val: actualizar_parametro('angulo1_i', val))
-caja_texto_angulo2.on_submit(lambda val: actualizar_parametro('angulo2_i', val))
+#Modificar parámetros
+caja_texto_masa1.on_submit(lambda val: actualizar_parametro('masa1', val)) 
+caja_texto_masa2.on_submit(lambda val: actualizar_parametro('masa2', val))  
+caja_texto_longitud1.on_submit(lambda val: actualizar_parametro('longitud1', val)) 
+caja_texto_longitud2.on_submit(lambda val: actualizar_parametro('longitud2', val))  
+caja_texto_masa_barra.on_submit(lambda val: actualizar_parametro('masa_barra', val))  
+caja_texto_radio_barra.on_submit(lambda val: actualizar_parametro('radio_barra', val))  
+caja_texto_friccion_aire.on_submit(lambda val: actualizar_parametro('friccion_aire', val)) 
+caja_texto_angulo1.on_submit(lambda val: actualizar_parametro('angulo1_i', val))  
+caja_texto_angulo2.on_submit(lambda val: actualizar_parametro('angulo2_i', val))  
 
 def inicializar():
-    barra.set_data([], [])
-    masa1.set_data([], [])
-    masa2.set_data([], [])
-    traza.set_data([], [])
-    texto_tiempo.set_text('')
-    return barra, masa1, masa2, traza, texto_tiempo
+    barra.set_data([], [])  
+    masa1_graf.set_data([], [])  
+    masa2_graf.set_data([], [])  
+    traza.set_data([], []) 
+    texto_tiempo.set_text('')  
+    return barra, masa1_graf, masa2_graf, traza, texto_tiempo  
 
 def animar(i):
-    pendulo.integrar_dinamica(dt)
-    (x1, y1), (x2, y2) = pendulo.cinematica_directa()
+    pendulo.integrar_dinamica(dt)  # Integramos la dinámica en el paso de tiempo actual
+    (x1, y1), (x2, y2) = pendulo.cinematica_directa()  # Calculamos las posiciones cartesianas
     
     # Actualizamos la barra y las masas
-    barra.set_data([0, x1, x2], [0, y1, y2]) # Dibujamos la barra completa
-    masa1.set_data([x1], [y1]) # Posición de la primera masa
-    masa2.set_data([x2], [y2]) # Posición de la segunda masa
-    trayectoria.append((x2, y2))
-    traza.set_data(*zip(*trayectoria))
-    texto_tiempo.set_text(f'Tiempo = {dt * i:.1f}s')
-    return barra, masa1, masa2, traza, texto_tiempo
+    barra.set_data([0, x1, x2], [0, y1, y2]) 
+    masa1_graf.set_data([x1], [y1])  
+    masa2_graf.set_data([x2], [y2])  
+    trayectoria.append((x2, y2))  
+    traza.set_data(*zip(*trayectoria)) 
+    texto_tiempo.set_text(f'Tiempo = {dt * i:.1f}s')  
+    return barra, masa1_graf, masa2_graf, traza, texto_tiempo  
 
-anim = FuncAnimation(fig, animar, init_func=inicializar, frames=int(tiempo_max/dt*2), interval=dt*1000/2, blit=True)
+# Creamos la animación con FuncAnimation
+anim = FuncAnimation(fig, animar, init_func=inicializar, frames=int(tiempo_max/dt), interval=dt*1000, blit=True)  # Animación con 60 fps
 
-plt.show()
+plt.show() 
