@@ -1,0 +1,46 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Parámetros del péndulo
+g = 9.8  # Aceleración gravitacional (m/s^2)
+L = 1.0  # Longitud del péndulo (m)
+omega = np.sqrt(g / L)  # Frecuencia angular (sqrt(g/L))
+
+# Rango de theta (posición angular) y v (velocidad angular)
+theta = np.linspace(-np.pi, np.pi, 100)  # Ángulo entre -π y π
+v = np.linspace(-2 * omega, 2 * omega, 100)  # Velocidad angular
+
+# Crear una malla para theta y v
+Theta, V = np.meshgrid(theta, v)
+
+# Calcular la energía total para cada punto en el espacio de fases
+# E = (1/2) * v^2 + (g/L) * (1 - cos(theta))
+Energy = 0.5 * V**2 + (g / L) * (1 - np.cos(Theta))
+
+# Niveles de energía para las trayectorias
+energy_levels = np.linspace(0.1, 2 * g / L, 10)  # Diferentes niveles de energía
+
+# Crear la figura
+plt.figure(figsize=(8, 6))
+plt.contour(Theta, V, Energy, levels=energy_levels, colors='blue')  # Graficar las trayectorias
+
+# Añadir ejes
+plt.axhline(0, color='black', linewidth=0.5)
+plt.axvline(0, color='black', linewidth=0.5)
+
+# Punto inicial (x1, 0) como en tu diagrama
+x1 = 1.0  # Ejemplo de posición inicial
+plt.plot(x1, 0, 'ro')  # Punto rojo en (x1, 0)
+plt.text(x1 + 0.2, 0, r'$(x_1, 0)$', color='red')
+
+# Añadir una flecha para indicar la dirección de la trayectoria
+plt.arrow(x1, 0, 0.2, 0.5, head_width=0.1, head_length=0.2, fc='blue', ec='blue')
+
+# Etiquetas de los ejes
+plt.xlabel(r'$x$ (posición)')
+plt.ylabel(r'$v$ (velocidad angular)')
+plt.title('Diagrama de fases de un péndulo simple')
+
+# Mostrar la gráfica
+plt.grid(True)
+plt.show()
