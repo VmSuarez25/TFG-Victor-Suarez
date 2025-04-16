@@ -1,0 +1,76 @@
+import os
+from xml.dom import minidom
+
+# Ruta para la carpeta de salida
+out_dir = "C:/Users/victo/Desktop/TFG/Visual Studio"
+if not os.path.exists(out_dir):
+    os.makedirs(out_dir)
+
+# Ruta al archivo XML
+file_path = "C:/Users/victo/Desktop/Prueba1 (2)/annotations.xml"
+
+try:
+    file = minidom.parse(file_path)
+except FileNotFoundError:
+    print(f"Error: El archivo '{file_path}' no se encuentra.")
+    exit()
+except PermissionError:
+    print(f"Error: No tienes permiso para acceder a '{file_path}'.")
+    exit()
+
+# Mapa de etiquetas a clases
+label_to_class = {"Masa1": 0, "Masa2": 1}
+
+images = file.getElementsByTagName('image')
+
+for image in images:
+    width = int(image.getAttribute('width'))
+    height = int(image.getAttribute('height'))
+    name = image.getAttribute('name')
+    
+    # Abrir archivo de salida
+    label_file = open(os.path.join(out_dir, name[:-4] + '.txt'), 'w')
+    
+    # Obtener todos los bounding boxes y puntos
+    boxes = image.getElementsByTagName('box')
+    points = image.getElementsByTagName('points')
+    
+    # Crear un diccionario para asociar puntos a etiquetas
+    point_data = {}
+    for point in points:
+        label = point.getAttribute('label')
+        coords = point.getAttribute('points').split(',')
+        x, y = float(coords[0]), float(coords[1])
+        occluded = point.getAttribute('occluded') == '1'
+        visibility = 0 if occluded else 1
+        point_data[label] = {'x': x, 'y': y, 'visibility': visibility}
+    
+    # Procesar cada bounding box
+    for box in boxes:
+        label = box.getAttribute('label')
+        class_id = label_to_class.get(label, 0)  # Obtener clase (0 o 1)
+        
+        # Coordenadas del bounding box
+        xtl = float(box.getAttribute('xtl'))
+        ytl = float(box.getAttribute('ytl'))
+        xbr = float(box.getAttribute('xbr'))
+        ybr = float(box.getAttribute('ybr'))
+        
+        # Calcular centro, ancho y alto normalizados
+        w = xbr - xtl
+        h = ybr - ytl
+        x_center = (xtl + w / 2) / width
+        y_center = (ytl + h / 2) / height
+        w_norm = w / width
+        h_norm = h / height
+        
+        # Obtener keypoint correspondiente
+        point = point_data.get(label, {'x': x_center * width, 'y': y_center * height, 'visibility': 1})
+        x_point = point['x'] / width
+        y_point = point['y'] / height
+        visibility = point['visibility']
+        
+        # Escribir en el archivo
+        label_file.write(f"{class_id} {x_center} {y_center} {w_norm} {h_norm} {x_point} {y_point} {visibility}\n")
+    
+    label_file.close()
